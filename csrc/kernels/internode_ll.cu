@@ -5,19 +5,24 @@
 #include "utils.cuh"
 #include "shmem_wrapper.cuh"
 #include <cooperative_groups.h>
-#include <rocshmem/rocshmem.hpp>
 #include <iostream>
+
+// Multi-node section: only compiled when -DENABLE_MULTI_NODE flag is used
+#ifdef ENABLE_MULTI_NODE
+
+#include <rocshmem/rocshmem.hpp>
+
 // low latency+RocSHMEM has issue with CTX.
 #define ROCM_DISABLE_CTX
 
 namespace cg = cooperative_groups;
 using namespace rocshmem;
-namespace deep_ep {
 
+namespace deep_ep {
 namespace internode_ll {
 
 __device__ void grid_barrier(int* global_counter, int num_blocks) {
-volatile int ret;
+    volatile int ret;
     __syncthreads();
     __threadfence();
     if (threadIdx.x == 0 ) {
@@ -32,7 +37,6 @@ volatile int ret;
     }
     __syncthreads();
 }
-
 
 template <int kNumThreads> __launch_bounds__(kNumThreads, 1)
 __global__ void clean_low_latency_buffer(int64_t* clean_0, int num_clean_int_0,
@@ -507,7 +511,6 @@ combine(void* combined_x,
     constexpr int kMaxNumWarps = 1024 / kWarpSize;
     __shared__ volatile int sync_large_warp_counters[kMaxNumWarps];
     if (threadIdx.x==0){
-        // printf("combine");
         #pragma unroll
         for (int i = 0; i < kMaxNumWarps; ++i) {
             sync_large_warp_counters[i] = 0;
@@ -566,7 +569,6 @@ combine(void* combined_x,
                 if (not zero_copy)
                     UNROLLED_WARP_COPY(7, lane_id, hidden_bf16_int4, buf_int4_ptr, x_int4, ld_nc_global, st_na_global);
                 
-                //nvshmemi_ibgda_put_nbi_warp(dst_ptr, buf_ptr, hidden * sizeof(gpu_bfloat16_t), dst_rank, local_expert_idx, lane_id, token_idx - offset);
 #if defined(ROCM_DISABLE_CTX)
                     internode::shmemx_int8_put_nbi_warp(
 #else
@@ -719,5 +721,57 @@ LAUNCH_KERNEL_NON_COOPERATIVE(&cfg, combine_func, \
 }
 
 } // namespace internode_ll
-
 } // namespace deep_ep
+
+// Single node section: only compiled when -DENABLE_MULTI_NODE flag is not used
+#else
+
+namespace deep_ep {
+namespace internode_ll {
+
+// Single-node stub implementation
+void clean_low_latency_buffer(int64_t* clean_0, int num_clean_int_0,
+                              int64_t* clean_1, int num_clean_int_1,
+                              cudaStream_t stream) {
+    throw std::runtime_error(
+        "clean_low_latency_buffer: Multi-node support not compiled. "
+        "Please rebuild with -DENABLE_MULTI_NODE flag."
+    );
+}
+
+void dispatch(void* packed_recv_x, float* packed_recv_x_scales,
+              int* packed_recv_src_info, int64_t* packed_recv_layout_range,
+              int* packed_recv_count,
+              int* global_atomic_counter,
+              void* rdma_recv_x, int64_t* rdma_recv_count, void* rdma_x,
+              const void* x, const int64_t* topk_idx,
+              int64_t* next_clean, int num_next_clean_int,
+              int num_tokens, int hidden, int num_max_dispatch_tokens_per_rank,
+              int num_topk, int num_experts, int rank, int num_ranks, bool use_fp8,
+              void* workspace, cudaStream_t stream, int phases) {
+    throw std::runtime_error(
+        "dispatch: Multi-node support not compiled. "
+        "Please rebuild with -DENABLE_MULTI_NODE flag."
+    );
+}
+
+void combine(void* combined_x,
+             void* rdma_recv_x, int64_t* rdma_recv_flag, void* rdma_send_x,
+             const void* x, const int64_t* topk_idx, const float* topk_weights,
+             const int* src_info, const int64_t* layout_range,
+             int* global_atomic_counter,
+             int64_t* next_clean, int num_next_clean_int,
+             int num_combined_tokens, int hidden, int num_max_dispatch_tokens_per_rank,
+             int num_topk, int num_experts, int rank, int num_ranks,
+             void* workspace, cudaStream_t stream,
+             int phases, bool zero_copy) {
+    throw std::runtime_error(
+        "combine: Multi-node support not compiled. "
+        "Please rebuild with -DENABLE_MULTI_NODE flag."
+    );
+}
+
+} // namespace internode_ll
+} // namespace deep_ep
+
+#endif
